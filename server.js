@@ -129,6 +129,31 @@ app.post('/orders', async (req, res) => {
   } catch (error) { res.status(500).json({ message: "Error placing order" }); }
 });
 
+// 👇 NAYA ROUTE: ORDER STATUS UPDATE KARNE KE LIYE 👇
+app.put('/orders/:id/status', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const newStatus = req.query.status;
+    
+    // Order ko MongoDB id ya custom id dono tarike se dhundhne ka logic
+    const order = await Order.findOneAndUpdate(
+      { $or: [ { _id: orderId.match(/^[0-9a-fA-F]{24}$/) ? orderId : null }, { id: parseInt(orderId) || 0 } ] },
+      { status: newStatus },
+      { new: true }
+    );
+    
+    if (order) {
+      broadcast({ type: "STATUS_UPDATE", data: order }); // Screen ko turant update karega
+      res.json(order);
+    } else {
+      res.status(404).send("Order not found");
+    }
+  } catch (error) {
+    console.error("Status Update Error:", error);
+    res.status(500).json({ message: "Error updating status" });
+  }
+});
+
 app.delete('/orders/:id', async (req, res) => {
   try {
     const orderId = req.params.id;
