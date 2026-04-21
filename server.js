@@ -1,6 +1,6 @@
-require('dotenv').config(); // Environment variables ke liye
+require('dotenv').config();
 const express = require('express');
-const mongoose = require('mongoose'); // MongoDB connect karne ke liye
+const mongoose = require('mongoose');
 const cors = require('cors');
 const { WebSocketServer } = require('ws');
 const http = require('http');
@@ -19,11 +19,16 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.log("DB Connection Error:", err));
 
 // ================= DATABASE SCHEMAS =================
+const CategorySchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+  image: String
+});
+
 const OrderSchema = new mongoose.Schema({
   id: Number,
   customer_name: String,
   items: Array,
-  total: Number, // <-- NAYA: Order ka total amount save karne ke liye
+  total: Number,
   status: { type: String, default: "Accepted" },
   createdAt: { type: Date, default: Date.now }
 });
@@ -31,17 +36,18 @@ const OrderSchema = new mongoose.Schema({
 const ProductSchema = new mongoose.Schema({
   id: { type: String, default: () => Date.now().toString() },
   name: String,
-  category: String,      // Main Category (e.g., Burgers)
-  subCategory: String,   // Sub Category (e.g., Veg, Chicken)
-  description: String,   // Item details
+  category: String,      
+  subCategory: String,   
+  description: String,   
   image: String,
   price: { type: Number, default: 150 },
-  addons: [{             // NAYA: Add-ons Array
+  addons: [{             
     name: String,
     price: Number
   }]
 });
 
+const Category = mongoose.model('Category', CategorySchema);
 const Order = mongoose.model('Order', OrderSchema);
 const Product = mongoose.model('Product', ProductSchema);
 
@@ -52,125 +58,90 @@ const broadcast = (message) => {
   });
 };
 
-// ================= PRODUCTS APIs =================
+// ================= CATEGORIES APIs =================
+app.get('/categories', async (req, res) => {
+  const cats = await Category.find();
+  res.json(cats);
+});
 
-// 1. Get all products
+app.post('/categories', async (req, res) => {
+  try {
+    const newCat = new Category(req.body);
+    await newCat.save();
+    res.status(201).json(newCat);
+  } catch(e) { res.status(500).json({error: "Category exist or error"}); }
+});
+
+app.delete('/categories/:id', async (req, res) => {
+  await Category.findByIdAndDelete(req.params.id);
+  res.json({ message: "Category deleted" });
+});
+
+// ================= PRODUCTS APIs =================
 app.get('/products', async (req, res) => {
   try {
     const products = await Product.find().sort({ _id: -1 });
     res.json(products);
-  } catch (error) {
-    res.status(500).json({ message: "Error fetching products" });
-  }
+  } catch (error) { res.status(500).json({ message: "Error fetching products" }); }
 });
 
-// 2. Add new product
 app.post('/products', async (req, res) => {
   try {
     const newProduct = new Product({ ...req.body });
     await newProduct.save();
     res.status(201).json(newProduct);
-  } catch (error) {
-    res.status(500).json({ message: "Error saving product" });
-  }
+  } catch (error) { res.status(500).json({ message: "Error saving product" }); }
 });
 
-// 3. Delete product (NAYA ROUTE - Admin Page se delete karne ke liye)
+app.put('/products/:id', async (req, res) => {
+  try {
+    const updated = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json(updated);
+  } catch (error) { res.status(500).json({ message: "Error updating product" }); }
+});
+
 app.delete('/products/:id', async (req, res) => {
   try {
     const itemId = req.params.id;
-    // Smart delete: _id (Mongo) ya id (Custom) dono check karega
     const deletedItem = await Product.findOneAndDelete({ 
-      $or: [
-        { _id: itemId.match(/^[0-9a-fA-F]{24}$/) ? itemId : null }, 
-        { id: itemId }
-      ] 
+      $or: [ { _id: itemId.match(/^[0-9a-fA-F]{24}$/) ? itemId : null }, { id: itemId } ] 
     });
-
-    if (deletedItem) {
-      res.status(200).json({ message: "Product deleted successfully!" });
-    } else {
-      res.status(404).json({ message: "Product not found!" });
-    }
-  } catch (error) {
-    console.error("Delete Error:", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
+    if (deletedItem) res.status(200).json({ message: "Deleted!" });
+    else res.status(404).json({ message: "Not found!" });
+  } catch (error) { res.status(500).json({ message: "Server Error" }); }
 });
 
 // ================= ORDERS APIs =================
-
-// 1. Get all orders
 app.get('/orders', async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
     res.json(orders);
-  } catch (error) {
-    res.status(500).json({ message: "Error fetching orders" });
-  }
+  } catch (error) { res.status(500).json({ message: "Error fetching orders" }); }
 });
 
-// 2. Place new order
 app.post('/orders', async (req, res) => {
   try {
     const totalOrders = await Order.countDocuments();
-    const newOrder = new Order({ 
-      id: 100 + totalOrders + 1, 
-      ...req.body, 
-      status: "Accepted"
-    });
-    await newOrder.save(); // DB mein save ho gaya
-    
-    broadcast({ type: "NEW_ORDER", data: newOrder }); // Kitchen ko real-time signal jayega
+    const newOrder = new Order({ id: 100 + totalOrders + 1, ...req.body, status: "Accepted" });
+    await newOrder.save(); 
+    broadcast({ type: "NEW_ORDER", data: newOrder }); 
     res.status(201).json(newOrder);
-  } catch (error) {
-    res.status(500).json({ message: "Error placing order" });
-  }
+  } catch (error) { res.status(500).json({ message: "Error placing order" }); }
 });
 
-// 3. Update order status (Purana logic)
-app.put('/orders/:id/status', async (req, res) => {
-  try {
-    const order = await Order.findOneAndUpdate(
-      { id: parseInt(req.params.id) },
-      { status: req.query.status },
-      { new: true }
-    );
-    
-    if (order) {
-      broadcast({ type: "STATUS_UPDATE", data: order });
-      res.json(order);
-    } else {
-      res.status(404).send("Order not found");
-    }
-  } catch (error) {
-    res.status(500).json({ message: "Error updating status" });
-  }
-});
-
-// 4. Delete/Complete Order (NAYA ROUTE - Serve dabane par hatane ke liye)
 app.delete('/orders/:id', async (req, res) => {
   try {
     const orderId = req.params.id;
     const deletedOrder = await Order.findOneAndDelete({
-      $or: [
-        { _id: orderId.match(/^[0-9a-fA-F]{24}$/) ? orderId : null },
-        { id: parseInt(orderId) || 0 }
-      ]
+      $or: [ { _id: orderId.match(/^[0-9a-fA-F]{24}$/) ? orderId : null }, { id: parseInt(orderId) || 0 } ]
     });
-
     if (deletedOrder) {
-      broadcast({ type: "ORDER_DELETED", data: orderId }); // Real-time hat jayega
-      res.status(200).json({ message: "Order completed and removed" });
-    } else {
-      res.status(404).json({ message: "Order not found" });
-    }
-  } catch (error) {
-    console.error("Order Delete Error:", error);
-    res.status(500).json({ message: "Error deleting order" });
-  }
+      broadcast({ type: "ORDER_DELETED", data: orderId });
+      res.status(200).json({ message: "Order completed" });
+    } else { res.status(404).json({ message: "Order not found" }); }
+  } catch (error) { res.status(500).json({ message: "Error deleting order" }); }
 });
 
 // ================= START SERVER =================
 const PORT = process.env.PORT || 8000;
-server.listen(PORT, () => console.log(`🚀 Cafe Backend Server running at http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Cafe Backend Server running at port ${PORT}`));
