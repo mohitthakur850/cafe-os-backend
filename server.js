@@ -119,14 +119,20 @@ app.get('/orders', async (req, res) => {
   } catch (error) { res.status(500).json({ message: "Error fetching orders" }); }
 });
 
+// ================= NAYA ORDER CREATION LOGIC =================
 app.post('/orders', async (req, res) => {
   try {
-    const totalOrders = await Order.countDocuments();
-    const newOrder = new Order({ id: 100 + totalOrders + 1, ...req.body, status: "Accepted" });
+    // FIX: Aakhri (highest) order ID dhundho, agar koi order nahi hai toh 101 se shuru karo
+    const lastOrder = await Order.findOne().sort({ id: -1 });
+    const newId = lastOrder && lastOrder.id ? lastOrder.id + 1 : 101;
+
+    const newOrder = new Order({ id: newId, ...req.body, status: "Accepted" });
     await newOrder.save(); 
     broadcast({ type: "NEW_ORDER", data: newOrder }); 
     res.status(201).json(newOrder);
-  } catch (error) { res.status(500).json({ message: "Error placing order" }); }
+  } catch (error) { 
+    res.status(500).json({ message: "Error placing order" }); 
+  }
 });
 
 // 👇 NAYA ROUTE: ORDER STATUS UPDATE KARNE KE LIYE 👇
