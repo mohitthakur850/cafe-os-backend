@@ -1,188 +1,24 @@
-require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const { WebSocketServer } = require('ws');
-const http = require('http');
+require('dotenv').config();
 
 const app = express();
+
+// Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json());
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
-
-// ================= MONGO_DB CONNECTION =================
-const MONGO_URI = process.env.MONGO_URI; 
+// MongoDB Connection
+const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/cafe";
 mongoose.connect(MONGO_URI)
-  .then(() => console.log("MongoDB Connected Successfully! ✅"))
-  .catch(err => console.log("DB Connection Error:", err));
+  .then(() => console.log('✅ MongoDB Connected Successfully'))
+  .catch(err => console.log('❌ MongoDB Connection Error:', err));
 
-// ================= DATABASE SCHEMAS =================
-const CategorySchema = new mongoose.Schema({
-  name: { type: String, required: true, unique: true },
-  image: String
-});
+// ==========================================
+// 🗄️ DATABASE SCHEMAS
+// ==========================================
 
-const OrderSchema = new mongoose.Schema({
-  id: Number,
-  customer_name: String,
-  items: Array,
-  total: Number,
-  status: { type: String, default: "Accepted" },
-  createdAt: { type: Date, default: Date.now }
-});
-
-const ProductSchema = new mongoose.Schema({
-  id: { type: String, default: () => Date.now().toString() },
-  name: String,
-  category: String,      
-  subCategory: String,   
-  description: String,   
-  image: String,
-  price: { type: Number, default: 150 },
-  addons: [{             
-    name: String,
-    price: Number
-  }],
-  // 👇 YEH NAYI LINE ADD KI GAYI HAI STOCK MANAGEMENT KE LIYE 👇
-  isAvailable: { type: Boolean, default: true } 
-});
-
-const Category = mongoose.model('Category', CategorySchema);
-const Order = mongoose.model('Order', OrderSchema);
-const Product = mongoose.model('Product', ProductSchema);
-
-// ================= WEBSOCKETS LOGIC =================
-const broadcast = (message) => {
-  wss.clients.forEach((client) => {
-    if (client.readyState === 1) client.send(JSON.stringify(message));
-  });
-};
-
-// ================= CATEGORIES APIs =================
-app.get('/categories', async (req, res) => {
-  const cats = await Category.find();
-  res.json(cats);
-});
-
-app.post('/categories', async (req, res) => {
-  try {
-    const newCat = new Category(req.body);
-    await newCat.save();
-    res.status(201).json(newCat);
-  } catch(e) { res.status(500).json({error: "Category exist or error"}); }
-});
-
-app.delete('/categories/:id', async (req, res) => {
-  await Category.findByIdAndDelete(req.params.id);
-  res.json({ message: "Category deleted" });
-});
-// ================= CATEGORIES APIs ================
-app.put('/categories/:id', async (req, res) => {
-  try {
-    const updated = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(updated);
-  } catch (error) { 
-    res.status(500).json({ message: "Error updating category" }); 
-  }
-});
-
-// ================= PRODUCTS APIs =================
-app.get('/products', async (req, res) => {
-  try {
-    const products = await Product.find().sort({ _id: -1 });
-    res.json(products);
-  } catch (error) { res.status(500).json({ message: "Error fetching products" }); }
-});
-
-app.post('/products', async (req, res) => {
-  try {
-    const newProduct = new Product({ ...req.body });
-    await newProduct.save();
-    res.status(201).json(newProduct);
-  } catch (error) { res.status(500).json({ message: "Error saving product" }); }
-});
-
-app.put('/products/:id', async (req, res) => {
-  try {
-    const updated = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json(updated);
-  } catch (error) { res.status(500).json({ message: "Error updating product" }); }
-});
-
-app.delete('/products/:id', async (req, res) => {
-  try {
-    const itemId = req.params.id;
-    const deletedItem = await Product.findOneAndDelete({ 
-      $or: [ { _id: itemId.match(/^[0-9a-fA-F]{24}$/) ? itemId : null }, { id: itemId } ] 
-    });
-    if (deletedItem) res.status(200).json({ message: "Deleted!" });
-    else res.status(404).json({ message: "Not found!" });
-  } catch (error) { res.status(500).json({ message: "Server Error" }); }
-});
-
-// ================= ORDERS APIs =================
-app.get('/orders', async (req, res) => {
-  try {
-    const orders = await Order.find().sort({ createdAt: -1 });
-    res.json(orders);
-  } catch (error) { res.status(500).json({ message: "Error fetching orders" }); }
-});
-
-// ================= NAYA ORDER CREATION LOGIC =================
-app.post('/orders', async (req, res) => {
-  try {
-    // FIX: Aakhri (highest) order ID dhundho, agar koi order nahi hai toh 101 se shuru karo
-    const lastOrder = await Order.findOne().sort({ id: -1 });
-    const newId = lastOrder && lastOrder.id ? lastOrder.id + 1 : 101;
-
-    const newOrder = new Order({ id: newId, ...req.body, status: "Accepted" });
-    await newOrder.save(); 
-    broadcast({ type: "NEW_ORDER", data: newOrder }); 
-    res.status(201).json(newOrder);
-  } catch (error) { 
-    res.status(500).json({ message: "Error placing order" }); 
-  }
-});
-
-// 👇 NAYA ROUTE: ORDER STATUS UPDATE KARNE KE LIYE 👇
-app.put('/orders/:id/status', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const newStatus = req.query.status;
-    
-    // Order ko MongoDB id ya custom id dono tarike se dhundhne ka logic
-    const order = await Order.findOneAndUpdate(
-      { $or: [ { _id: orderId.match(/^[0-9a-fA-F]{24}$/) ? orderId : null }, { id: parseInt(orderId) || 0 } ] },
-      { status: newStatus },
-      { new: true }
-    );
-    
-    if (order) {
-      broadcast({ type: "STATUS_UPDATE", data: order }); // Screen ko turant update karega
-      res.json(order);
-    } else {
-      res.status(404).send("Order not found");
-    }
-  } catch (error) {
-    console.error("Status Update Error:", error);
-    res.status(500).json({ message: "Error updating status" });
-  }
-});
-
-app.delete('/orders/:id', async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const deletedOrder = await Order.findOneAndDelete({
-      $or: [ { _id: orderId.match(/^[0-9a-fA-F]{24}$/) ? orderId : null }, { id: parseInt(orderId) || 0 } ]
-    });
-    if (deletedOrder) {
-      broadcast({ type: "ORDER_DELETED", data: orderId });
-      res.status(200).json({ message: "Order completed" });
-    } else { res.status(404).json({ message: "Order not found" }); }
-  } catch (error) { res.status(500).json({ message: "Error deleting order" }); }
-});
 // 1. Admin Schema
 const AdminSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
@@ -190,7 +26,47 @@ const AdminSchema = new mongoose.Schema({
 });
 const Admin = mongoose.model('Admin', AdminSchema);
 
-// 2. Login API Route
+// 2. Product Schema (Menu Items)
+const ProductSchema = new mongoose.Schema({
+  id: { type: String, default: () => Date.now().toString() },
+  name: String,
+  category: String,
+  subCategory: String,
+  description: String,
+  image: String,
+  price: { type: Number, default: 0 },
+  addons: [{ name: String, price: Number }],
+  isAvailable: { type: Boolean, default: true } // 📦 Stock Management
+});
+const Product = mongoose.model('Product', ProductSchema);
+
+// 3. Category Schema
+const CategorySchema = new mongoose.Schema({
+  name: String,
+  image: String
+});
+const Category = mongoose.model('Category', CategorySchema);
+
+// 4. Order Schema
+const OrderSchema = new mongoose.Schema({
+  id: { type: String, default: () => Math.floor(100 + Math.random() * 900).toString() },
+  customer_name: String,
+  items: Array,
+  total: Number,
+  status: { type: String, default: 'Preparing' }, // Preparing, Ready, Completed
+  createdAt: { type: Date, default: Date.now }
+});
+const Order = mongoose.model('Order', OrderSchema);
+
+// ==========================================
+// 🚀 API ROUTES
+// ==========================================
+
+app.get('/', (req, res) => {
+  res.send("RE:FILL CAFE API is Running! ☕");
+});
+
+// --- ADMIN AUTH ROUTES ---
 app.post('/admin/login', async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -201,9 +77,94 @@ app.post('/admin/login', async (req, res) => {
       res.status(401).json({ success: false, message: "Invalid Credentials" });
     }
   } catch (error) {
-    res.status(500).json({ success: true, message: "Server Error" });
+    res.status(500).json({ success: false, message: "Server Error" });
   }
 });
-// ================= START SERVER =================
-const PORT = process.env.PORT || 8000;
-server.listen(PORT, () => console.log(`🚀 Cafe Backend Server running at port ${PORT}`));
+
+// --- PRODUCT ROUTES ---
+app.get('/products', async (req, res) => {
+  const products = await Product.find();
+  res.json(products);
+});
+
+app.post('/products', async (req, res) => {
+  const newProduct = new Product(req.body);
+  await newProduct.save();
+  res.json(newProduct);
+});
+
+app.put('/products/:id', async (req, res) => {
+  try {
+    // Supports updating by MongoDB _id OR custom id
+    const product = await Product.findOneAndUpdate(
+      { $or: [{ _id: req.params.id }, { id: req.params.id }] }, 
+      req.body, 
+      { new: true }
+    );
+    res.json(product);
+  } catch (err) {
+    res.status(500).send("Error updating product");
+  }
+});
+
+app.delete('/products/:id', async (req, res) => {
+  await Product.findOneAndDelete({ $or: [{ _id: req.params.id }, { id: req.params.id }] });
+  res.json({ message: 'Product Deleted' });
+});
+
+// --- CATEGORY ROUTES ---
+app.get('/categories', async (req, res) => {
+  const categories = await Category.find();
+  res.json(categories);
+});
+
+app.post('/categories', async (req, res) => {
+  const newCategory = new Category(req.body);
+  await newCategory.save();
+  res.json(newCategory);
+});
+
+app.put('/categories/:id', async (req, res) => {
+  const category = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true });
+  res.json(category);
+});
+
+app.delete('/categories/:id', async (req, res) => {
+  await Category.findByIdAndDelete(req.params.id);
+  res.json({ message: 'Category Deleted' });
+});
+
+// --- ORDER ROUTES ---
+app.get('/orders', async (req, res) => {
+  const orders = await Order.find().sort({ createdAt: -1 }); // Naye orders pehle
+  res.json(orders);
+});
+
+app.post('/orders', async (req, res) => {
+  const newOrder = new Order(req.body);
+  await newOrder.save();
+  res.json(newOrder);
+});
+
+// Order Status Update Route (Live to Completed)
+app.put('/orders/:id/status', async (req, res) => {
+  try {
+    const order = await Order.findOneAndUpdate(
+      { $or: [{ _id: req.params.id }, { id: req.params.id }] },
+      { status: req.query.status },
+      { new: true }
+    );
+    res.json(order);
+  } catch (err) {
+    res.status(500).send("Error updating status");
+  }
+});
+
+app.delete('/orders/:id', async (req, res) => {
+  await Order.findOneAndDelete({ $or: [{ _id: req.params.id }, { id: req.params.id }] });
+  res.json({ message: 'Order Deleted' });
+});
+
+// Start Server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
