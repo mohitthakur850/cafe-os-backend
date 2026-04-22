@@ -76,6 +76,15 @@ app.delete('/categories/:id', async (req, res) => {
   await Category.findByIdAndDelete(req.params.id);
   res.json({ message: "Category deleted" });
 });
+// ================= CATEGORIES APIs ================
+app.put('/categories/:id', async (req, res) => {
+  try {
+    const updated = await Category.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json(updated);
+  } catch (error) { 
+    res.status(500).json({ message: "Error updating category" }); 
+  }
+});
 
 // ================= PRODUCTS APIs =================
 app.get('/products', async (req, res) => {
