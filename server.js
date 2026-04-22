@@ -183,7 +183,27 @@ app.delete('/orders/:id', async (req, res) => {
     } else { res.status(404).json({ message: "Order not found" }); }
   } catch (error) { res.status(500).json({ message: "Error deleting order" }); }
 });
+// 1. Admin Schema
+const AdminSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true }
+});
+const Admin = mongoose.model('Admin', AdminSchema);
 
+// 2. Login API Route
+app.post('/admin/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const adminUser = await Admin.findOne({ username, password });
+    if (adminUser) {
+      res.json({ success: true, message: "Login Successful!" });
+    } else {
+      res.status(401).json({ success: false, message: "Invalid Credentials" });
+    }
+  } catch (error) {
+    res.status(500).json({ success: true, message: "Server Error" });
+  }
+});
 // ================= START SERVER =================
 const PORT = process.env.PORT || 8000;
 server.listen(PORT, () => console.log(`🚀 Cafe Backend Server running at port ${PORT}`));
