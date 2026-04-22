@@ -44,7 +44,9 @@ const ProductSchema = new mongoose.Schema({
   addons: [{             
     name: String,
     price: Number
-  }]
+  }],
+  // 👇 YEH NAYI LINE ADD KI GAYI HAI STOCK MANAGEMENT KE LIYE 👇
+  isAvailable: { type: Boolean, default: true } 
 });
 
 const Category = mongoose.model('Category', CategorySchema);
