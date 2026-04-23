@@ -9,8 +9,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection
-const MONGO_URI = "mongodb+srv://mohit85039_db_user:PrnWTmUlUWGEVoWE@cluster0.8bvhtvy.mongodb.net/?appName=Cluster0";
+// MongoDB Connection (Aapka ID Pass isme hai, par ab yeh .env bhi support karega)
+const MONGO_URI = process.env.MONGO_URI;
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ MongoDB Connected Successfully'))
   .catch(err => console.log('❌ MongoDB Connection Error:', err));
@@ -47,9 +47,9 @@ const CategorySchema = new mongoose.Schema({
 });
 const Category = mongoose.model('Category', CategorySchema);
 
-// 4. Order Schema
+// 4. Order Schema (FIXED: Random Number Hataya)
 const OrderSchema = new mongoose.Schema({
-  id: { type: String, default: () => Math.floor(100 + Math.random() * 900).toString() },
+  id: String, // Ab random generator yahan nahi hai
   customer_name: String,
   items: Array,
   total: Number,
@@ -95,7 +95,6 @@ app.post('/products', async (req, res) => {
 
 app.put('/products/:id', async (req, res) => {
   try {
-    // Supports updating by MongoDB _id OR custom id
     const product = await Product.findOneAndUpdate(
       { $or: [{ _id: req.params.id }, { id: req.params.id }] }, 
       req.body, 
@@ -140,10 +139,33 @@ app.get('/orders', async (req, res) => {
   res.json(orders);
 });
 
+// FIXED: NAYA ORDER PLACE KARNE KA LOGIC (DAILY RESET COUNTER)
 app.post('/orders', async (req, res) => {
-  const newOrder = new Order(req.body);
-  await newOrder.save();
-  res.json(newOrder);
+  try {
+    // 1. Aaj ki date ki starting aur ending time set karein
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date();
+    endOfDay.setHours(23, 59, 59, 999);
+
+    // 2. Check karein aaj ke din database mein kitne order aaye hain
+    const todayOrderCount = await Order.countDocuments({
+      createdAt: { $gte: startOfDay, $lte: endOfDay }
+    });
+
+    // 3. Naya Order ID generate karein (Count + 1)
+    const newOrderId = (todayOrderCount + 1).toString();
+
+    // 4. Naya order save karein
+    const newOrder = new Order({ ...req.body, id: newOrderId });
+    await newOrder.save();
+    
+    res.json(newOrder);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send("Error placing order");
+  }
 });
 
 // Order Status Update Route (Live to Completed)
