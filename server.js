@@ -28,7 +28,7 @@ const Product = mongoose.model('Product', new mongoose.Schema({
   id: { type: String, default: () => Date.now().toString() },
   name: String, category: String, subCategory: String,
   description: String, image: String, price: { type: Number, default: 0 },
-  addons: [{ name: String, price: Number }],
+  addons: [{ name: String, price: Number }],selectionType: { type: String, default: 'Multiple' },
   isAvailable: { type: Boolean, default: true }
 }));
 
