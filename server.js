@@ -111,13 +111,31 @@ app.post('/orders', async (req, res) => {
   } catch (error) { res.status(500).send("Error placing order"); }
 });
 
+// ✅ NEW UPDATED BACKEND ROUTE (With Instant Socket Trigger)
 app.put('/orders/:id/status', async (req, res) => {
   try {
-    const updatedOrder = await Order.findOneAndUpdate({ $or: [{ _id: req.params.id }, { id: req.params.id }] }, { status: req.query.status }, { new: true });
-    io.emit('orderUpdated'); // ⚡ Broadcast update
+    const { id } = req.params;
+    const { status } = req.query;
+    
+    // 1. Database update karo
+    const updatedOrder = await Order.findOneAndUpdate(
+      { $or: [{ _id: id }, { id: parseInt(id) || 0 }] }, // Dono MongoDB ID aur Custom ID support ke liye
+      { status },
+      { new: true }
+    );
+    
+    // 2. 🔥 THE LIFESAVER LINE: Saare screens ko instantly alert bhejo!
+    if (req.app.get('io')) {
+      req.app.get('io').emit('orderUpdated');
+      console.log("📢 Socket event 'orderUpdated' emitted to all screens!");
+    } else if (global.io) {
+      global.io.emit('orderUpdated');
+    }
+
     res.json(updatedOrder);
-  } catch (error) {
-    res.status(500).send("Error updating order status");
+  } catch (err) {
+    console.error("Backend Status Update Error:", err);
+    res.status(500).send(err);
   }
 });
 
