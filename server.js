@@ -67,6 +67,19 @@ const Order = mongoose.model('Order', new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 }));
 
+const buildOrderLookup = (id) => {
+  const lookupId = String(id);
+
+  if (mongoose.Types.ObjectId.isValid(lookupId)) {
+    return { _id: lookupId };
+  }
+
+  return {
+    id: lookupId,
+    status: { $ne: 'Completed' }
+  };
+};
+
 // ==========================================
 // 🚀 API ROUTES
 // ==========================================
@@ -111,36 +124,33 @@ app.post('/orders', async (req, res) => {
   } catch (error) { res.status(500).send("Error placing order"); }
 });
 
-// ✅ NEW UPDATED BACKEND ROUTE (With Instant Socket Trigger)
 app.put('/orders/:id/status', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status } = req.query;
-    
-    // 1. Database update karo
-    const updatedOrder = await Order.findOneAndUpdate(
-      { $or: [{ _id: id }, { id: parseInt(id) || 0 }] }, // Dono MongoDB ID aur Custom ID support ke liye
-      { status },
-      { new: true }
-    );
-    
-    // 2. 🔥 THE LIFESAVER LINE: Saare screens ko instantly alert bhejo!
-    if (req.app.get('io')) {
-      req.app.get('io').emit('orderUpdated');
-      console.log("📢 Socket event 'orderUpdated' emitted to all screens!");
-    } else if (global.io) {
-      global.io.emit('orderUpdated');
+    const nextStatus = req.body.status || req.query.status;
+
+    if (!nextStatus) {
+      return res.status(400).json({ message: "Missing order status" });
     }
 
+    const updatedOrder = await Order.findOneAndUpdate(
+      buildOrderLookup(req.params.id),
+      { status: nextStatus },
+      { new: true, sort: { createdAt: -1 } }
+    );
+
+    if (!updatedOrder) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    io.emit('orderUpdated'); // ⚡ Broadcast update
     res.json(updatedOrder);
-  } catch (err) {
-    console.error("Backend Status Update Error:", err);
-    res.status(500).send(err);
+  } catch (error) {
+    console.error("Error updating order status:", error);
+    res.status(500).send("Error updating order status");
   }
 });
 
 app.delete('/orders/:id', async (req, res) => { 
-  await Order.findOneAndDelete({ $or: [{ _id: req.params.id }, { id: req.params.id }] }); 
+  await Order.findOneAndDelete(buildOrderLookup(req.params.id), { sort: { createdAt: -1 } }); 
   io.emit('orderUpdated'); // ⚡ Broadcast update
   res.json({ message: 'Deleted' }); 
 });
