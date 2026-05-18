@@ -71,13 +71,52 @@ const buildOrderLookup = (id) => {
   const lookupId = String(id);
 
   if (mongoose.Types.ObjectId.isValid(lookupId)) {
-    return { _id: lookupId };
+    return {
+      $or: [
+        { _id: new mongoose.Types.ObjectId(lookupId) },
+        { id: lookupId }
+      ]
+    };
   }
 
   return {
     id: lookupId,
     status: { $ne: 'Completed' }
   };
+};
+
+const updateOrderStatus = async (req, res) => {
+  try {
+    const nextStatus = req.body.status || req.query.status;
+
+    if (!nextStatus) {
+      return res.status(400).json({ message: "Missing order status" });
+    }
+
+    const updatedOrder = await Order.findOneAndUpdate(
+      buildOrderLookup(req.params.id),
+      { status: nextStatus },
+      { new: true, sort: { createdAt: -1 }, runValidators: true }
+    );
+
+    if (!updatedOrder) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    io.emit('orderUpdated');
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error("Error updating order status:", {
+      id: req.params.id,
+      status: req.body.status || req.query.status,
+      message: error.message,
+      stack: error.stack
+    });
+    res.status(500).json({
+      message: "Error updating order status",
+      error: error.message
+    });
+  }
 };
 
 // ==========================================
@@ -123,6 +162,9 @@ app.post('/orders', async (req, res) => {
     res.json(newOrder);
   } catch (error) { res.status(500).send("Error placing order"); }
 });
+
+app.put('/orders/:id/status', updateOrderStatus);
+app.put('/order/:id/status', updateOrderStatus);
 
 app.put('/orders/:id/status', async (req, res) => {
   try {
