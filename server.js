@@ -3,30 +3,34 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
-// 👇 1. WEBSOCKET IMPORTS 👇
 const http = require('http');
 const { Server } = require('socket.io');
 
 const app = express();
 
-// 👇 2. EXPRESS KO HTTP SERVER MEIN WRAP KARNA 👇
+// 🛑 1. BULLETPROOF CORS SETUP (Isko sabse upar rakhna zaroori hai)
+app.use(cors({
+  origin: "*", // Sab allow karega (localhost aur live Vercel dono)
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+app.use(express.json());
+
+// 🛑 2. SOCKET.IO CORS SETUP
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // Sabhi frontend URLs ko allow karega
-    methods: ["GET", "POST", "PUT", "DELETE"]
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
   }
 });
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// ⚡ Socket Connection Checker (Terminal mein dikhega)
+// ⚡ Socket Connection Checker
 io.on('connection', (socket) => {
   console.log('⚡ A device connected to live sync!');
   socket.on('disconnect', () => {
-    console.log('❌ A device disconnected from live sync');
+    console.log('❌ A device disconnected');
   });
 });
 
@@ -101,8 +105,7 @@ app.post('/orders', async (req, res) => {
     const newOrder = new Order({ ...req.body, id: newOrderId });
     await newOrder.save();
 
-    // 🔥 JAISE HI NAYA ORDER AAYE, SABKO BATA DO (INSTANT SYNC) 🔥
-    io.emit('orderUpdated');
+    io.emit('orderUpdated'); // ⚡ Broadcast update
 
     res.json(newOrder);
   } catch (error) { res.status(500).send("Error placing order"); }
@@ -111,10 +114,7 @@ app.post('/orders', async (req, res) => {
 app.put('/orders/:id/status', async (req, res) => {
   try {
     const updatedOrder = await Order.findOneAndUpdate({ $or: [{ _id: req.params.id }, { id: req.params.id }] }, { status: req.query.status }, { new: true });
-    
-    // 🔥 JAISE HI STATUS UPDATE HO (e.g. Preparing -> Ready), SABKO BATA DO 🔥
-    io.emit('orderUpdated');
-    
+    io.emit('orderUpdated'); // ⚡ Broadcast update
     res.json(updatedOrder);
   } catch (error) {
     res.status(500).send("Error updating order status");
@@ -123,13 +123,9 @@ app.put('/orders/:id/status', async (req, res) => {
 
 app.delete('/orders/:id', async (req, res) => { 
   await Order.findOneAndDelete({ $or: [{ _id: req.params.id }, { id: req.params.id }] }); 
-  
-  // NAYA: Agar Admin koi test order delete karta hai, toh bhi sabko update chale jayega
-  io.emit('orderUpdated');
-  
+  io.emit('orderUpdated'); // ⚡ Broadcast update
   res.json({ message: 'Deleted' }); 
 });
 
-// 👇 3. SABSE IMPORTANT: app.listen KI JAGAH server.listen USE KIYA HAI 👇
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`🚀 Server and WebSockets running on port ${PORT}`));
