@@ -3,11 +3,32 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
+// 👇 1. WEBSOCKET IMPORTS 👇
+const http = require('http');
+const { Server } = require('socket.io');
+
 const app = express();
+
+// 👇 2. EXPRESS KO HTTP SERVER MEIN WRAP KARNA 👇
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*", // Sabhi frontend URLs ko allow karega
+    methods: ["GET", "POST", "PUT", "DELETE"]
+  }
+});
 
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// ⚡ Socket Connection Checker (Terminal mein dikhega)
+io.on('connection', (socket) => {
+  console.log('⚡ A device connected to live sync!');
+  socket.on('disconnect', () => {
+    console.log('❌ A device disconnected from live sync');
+  });
+});
 
 // MongoDB Connection
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://mohit85039_db_user:PrnWTmUlUWGEVoWE@cluster0.8bvhtvy.mongodb.net/?appName=Cluster0";
@@ -28,7 +49,7 @@ const Product = mongoose.model('Product', new mongoose.Schema({
   id: { type: String, default: () => Date.now().toString() },
   name: String, category: String, subCategory: String,
   description: String, image: String, price: { type: Number, default: 0 },
-  addons: [{ name: String, price: Number }],selectionType: { type: String, default: 'Multiple' },
+  addons: [{ name: String, price: Number }], selectionType: { type: String, default: 'Multiple' },
   isAvailable: { type: Boolean, default: true }
 }));
 
@@ -70,6 +91,7 @@ app.delete('/categories/:id', async (req, res) => { await Category.findByIdAndDe
 
 // Orders
 app.get('/orders', async (req, res) => res.json(await Order.find().sort({ createdAt: -1 })));
+
 app.post('/orders', async (req, res) => {
   try {
     const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
@@ -78,11 +100,36 @@ app.post('/orders', async (req, res) => {
     const newOrderId = (todayOrderCount + 1).toString();
     const newOrder = new Order({ ...req.body, id: newOrderId });
     await newOrder.save();
+
+    // 🔥 JAISE HI NAYA ORDER AAYE, SABKO BATA DO (INSTANT SYNC) 🔥
+    io.emit('orderUpdated');
+
     res.json(newOrder);
   } catch (error) { res.status(500).send("Error placing order"); }
 });
-app.put('/orders/:id/status', async (req, res) => res.json(await Order.findOneAndUpdate({ $or: [{ _id: req.params.id }, { id: req.params.id }] }, { status: req.query.status }, { new: true })));
-app.delete('/orders/:id', async (req, res) => { await Order.findOneAndDelete({ $or: [{ _id: req.params.id }, { id: req.params.id }] }); res.json({ message: 'Deleted' }); });
 
+app.put('/orders/:id/status', async (req, res) => {
+  try {
+    const updatedOrder = await Order.findOneAndUpdate({ $or: [{ _id: req.params.id }, { id: req.params.id }] }, { status: req.query.status }, { new: true });
+    
+    // 🔥 JAISE HI STATUS UPDATE HO (e.g. Preparing -> Ready), SABKO BATA DO 🔥
+    io.emit('orderUpdated');
+    
+    res.json(updatedOrder);
+  } catch (error) {
+    res.status(500).send("Error updating order status");
+  }
+});
+
+app.delete('/orders/:id', async (req, res) => { 
+  await Order.findOneAndDelete({ $or: [{ _id: req.params.id }, { id: req.params.id }] }); 
+  
+  // NAYA: Agar Admin koi test order delete karta hai, toh bhi sabko update chale jayega
+  io.emit('orderUpdated');
+  
+  res.json({ message: 'Deleted' }); 
+});
+
+// 👇 3. SABSE IMPORTANT: app.listen KI JAGAH server.listen USE KIYA HAI 👇
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server and WebSockets running on port ${PORT}`));
